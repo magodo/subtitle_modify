@@ -8,17 +8,16 @@
 #              but incorrect timestamp and index. Corret them.
 #########################################################################
 
-def int_2_bytes(i):
-    l = []
-    while i > 0:
-        l.append(i%10)
-        i = i//10
-    l.reverse()
-    for j in range(len(l)):
-        l[j] = ord('0')+l[j]
-    return bytes(l)
+try:
+    import chardet
+except ImportError as e:
+    print("Need module: chardet")
+    raise e
 
-def time_minus_base(now, base):
+import sys
+import argparse
+
+def time_shift(now, shift):
 
     def __time(s):
 
@@ -28,7 +27,7 @@ def time_minus_base(now, base):
         ms = int(s[9:])
         return hh*3600+mm*60+ss+ms/1000
 
-    t = __time(now) - __time(base)
+    t = __time(now) - __time(shift)
 
     ms = int(t*1000%1000)
     ss = int(int(t)%60)
@@ -36,33 +35,70 @@ def time_minus_base(now, base):
     hh = int(t-ss-60*mm)//3600
     return "{:02}:{:02}:{:02},{}".format(hh,mm,ss,ms)
 
-def f():
-    f = open('str2.srt','rb') # FIXME
-    lines = f.readlines()
+def convert(source, shift, dest = 'output.srt'):
+
+    # Detect the encoding of the input source file since we'll open it in "text" mode.
+    # Also detect the line ending of it since we'll keep it (otherwise, file opened in
+    # "text" mode for write will depend on os.linesep).
+    with open(source, 'rb') as f:
+
+        # detect line ending
+        first_line = f.readline()
+        if first_line.endswith(b'\r\n'):
+            ending = '\r\n'
+        elif first_line.endswith(b'\r'):
+            ending = '\r'
+        elif first_line.endswith(b'\n'):
+            ending = '\n'
+        else:
+            # just guess
+            print("Line ending detection failed, guess it is '\n'...")
+            ending = '\n'
+
+        # detect file encoding
+        raw_content = b''.join([first_line]+f.readlines())
+        encoding = chardet.detect(raw_content)['encoding']
+
+    # detect the line ending of the input source file
+
+
+    # now begins real work
     index = 1
-    output = b''
     counter = 0
-    start_time = '00:55:49,000' #FIXME
-    for line in lines:
+    new_content = ''
+    with open(source, 'r', encoding = encoding) as f:
+        for line in f:
 
-        if (counter == 0):
-            line = int_2_bytes(index)+line[line.find(b'\r'):]
-            index += 1
+            # update index
+            if counter == 0:
+                line = str(index) + line[line.find('\n'):]
+                index += 1
 
-        if (counter == 1):
-            line = line.rstrip()
-            t1 = line[:line.find(b' ')]
-            t1 = time_minus_base(t1,start_time)
-            t2 = line[line.find(b'>')+2:]
-            t2 = time_minus_base(t2,start_time)
-            line = bytes(t1,'ascii')+b" --> "+bytes(t2,'ascii')+b'\r\n'
+            # update the timestamp
+            if counter == 1:
+                t1 = time_shift(line[:line.find(' ')], shift)
+                t2 = time_shift(line[line.find('>')+2:-1], shift)
+                line = t1 + " --> " + t2 + '\n'
 
-        if (line == b'\r\n'):
-            counter = -1
+            # end of a subtitle section
+            if line == '\n':
+                counter = -1
 
-        output += line
-        print (line)
-        counter += 1
+            line = line.replace('\n', ending)
+            new_content += line
+            counter += 1
 
-    return output
+    # write out
+    with open(dest, 'w', encoding=encoding, newline='') as f:
+        f.write(new_content)
 
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-i', '--input', help = 'input subtitle file')
+    parser.add_argument('-s', '--shift', help = 'shift time, normally equals to the length of last video(s) (e.g. 00:55:49,000)')
+    parser.add_argument('-o', '--output', help = 'output subtitle file', default = 'output.srt')
+
+    args = parser.parse_args()
+
+    sys.exit(convert(args.input, args.shift, args.output))
